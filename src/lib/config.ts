@@ -50,6 +50,15 @@ export const config = {
   get invoiceSeries() {
     return env("VIETTEL_INVOICE_SERIES", "K23TXM");
   },
+  /** Thông tin người bán in trên bản thể hiện của Mock (Viettel thật lấy từ hồ sơ doanh nghiệp đã đăng ký). */
+  get mockSeller() {
+    return {
+      name: env("VIETTEL_MOCK_SELLER_NAME", "Công ty TNHH Demo Hóa Đơn Điện Tử"),
+      address: env("VIETTEL_MOCK_SELLER_ADDRESS", "Số 1 Trần Hữu Dực, Phường Mỹ Đình 2, Quận Nam Từ Liêm, Hà Nội"),
+      phone: env("VIETTEL_MOCK_SELLER_PHONE", "024 0000 0000"),
+      bankAccount: env("VIETTEL_MOCK_SELLER_BANK", "0000000000 - Ngân hàng Demo"),
+    };
+  },
   get invoiceType() {
     return env("VIETTEL_INVOICE_TYPE", "1");
   },

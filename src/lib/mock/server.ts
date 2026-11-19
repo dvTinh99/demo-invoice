@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { prisma } from "../db";
 import { config, VIETTEL_PATHS } from "../config";
-import { buildSimplePdf } from "./pdf";
+import { buildInvoicePdf } from "./invoice-pdf";
 import { buildZip } from "./zip";
 
 const TOKEN_TTL_SECONDS = 300;
@@ -221,36 +221,18 @@ async function getFile(req: Request) {
     : await prisma.mockInvoice.findUnique({ where: { invoiceNo: body.invoiceNo ?? "" } });
   if (!inv) return json({ errorCode: "INVOICE_NOT_FOUND", description: "Không tìm thấy hóa đơn" }, 404);
 
-  const p = JSON.parse(inv.payload);
-  const pm = p.payments?.[0]?.paymentMethodName ?? "";
-  const buyerLabel = p.buyerInfo.buyerLegalName || p.buyerInfo.buyerName || "Người mua không lấy hóa đơn";
-  const taxLabel = (v: number) => (v === -2 ? "KCT" : v === -1 ? "KKKNT" : `${v}%`);
-  const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(n);
-  const pdf = buildSimplePdf([
-    { text: "HOA DON GIA TRI GIA TANG (MOCK)", size: 16, bold: true },
-    { text: `Mau so: ${inv.templateCode}   Ky hieu: ${inv.invoiceSeries}   So: ${inv.invoiceNo}` },
-    { text: `Ma tra cuu: ${inv.reservationCode}   Ngay lap: ${inv.createdAt.toISOString().slice(0, 10)}` },
-    { text: `Don vi ban: MST ${inv.supplierTaxCode}` },
-    { text: " " },
-    { text: `Don vi mua: ${buyerLabel}`, bold: true },
-    ...(p.buyerInfo.buyerLegalName && p.buyerInfo.buyerName ? [{ text: `Nguoi mua hang: ${p.buyerInfo.buyerName}` }] : []),
-    { text: `MST: ${p.buyerInfo.buyerTaxCode || "-"}   Dia chi: ${p.buyerInfo.buyerAddressLine ?? "-"}` },
-    { text: `Hinh thuc thanh toan: ${pm}` },
-    { text: " " },
-    { text: "STT | Ten hang | DVT | SL | Don gia | Thanh tien | Thue", bold: true },
-    ...p.itemInfo.map((it: Record<string, number | string>) => ({
-      text: `${it.lineNumber} | ${it.itemName} | ${it.unitName} | ${it.quantity} | ${fmt(+it.unitPrice)} | ${fmt(+it.itemTotalAmountWithoutTax)} | ${taxLabel(+it.taxPercentage)}`,
-    })),
-    { text: " " },
-    { text: `Cong tien hang: ${fmt(p.summarizeInfo.totalAmountWithoutTax)} VND` },
-    { text: `Tien thue GTGT: ${fmt(p.summarizeInfo.totalTaxAmount)} VND` },
-    { text: `Tong thanh toan: ${fmt(p.summarizeInfo.totalAmountWithTax)} VND`, bold: true, size: 12 },
-    { text: `Bang chu: ${p.summarizeInfo.totalAmountWithTaxInWords}` },
-    ...(p.generalInvoiceInfo.invoiceNote ? [{ text: `Ghi chu: ${p.generalInvoiceInfo.invoiceNote}` }] : []),
-    { text: " " },
-    { text: `transactionUuid: ${inv.transactionUuid}`, size: 8 },
-    { text: "Ban the hien do Mock Viettel S-Invoice sinh ra - khong co gia tri phap ly.", size: 8 },
-  ]);
+  const pdf = await buildInvoicePdf({
+    templateCode: inv.templateCode,
+    invoiceSeries: inv.invoiceSeries,
+    invoiceNo: inv.invoiceNo,
+    reservationCode: inv.reservationCode,
+    transactionUuid: inv.transactionUuid,
+    issuedAt: inv.createdAt,
+    supplierTaxCode: inv.supplierTaxCode,
+    seller: config.mockSeller,
+    lookupUrl: config.appUrl,
+    payload: JSON.parse(inv.payload),
+  });
   if (String(body.fileType ?? "PDF").toUpperCase() === "ZIP") {
     // ZIP thực tế gồm .xml, .xsl, logo, QR...; Mock chỉ gói XML dữ liệu + PDF
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<HDon mock="true"><TTChung><KHMSHDon>${inv.templateCode}</KHMSHDon><KHHDon>${inv.invoiceSeries}</KHHDon><SHDon>${inv.invoiceNo}</SHDon></TTChung><DLieu><![CDATA[${inv.payload}]]></DLieu></HDon>`;
