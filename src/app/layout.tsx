@@ -2,12 +2,15 @@ import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { ModeBadge } from "@/components/ModeBadge";
+import { config } from "@/lib/config";
 import "./globals.css";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin", "vietnamese"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
+  // URL tuyệt đối cho og:image khi dán link vào chat
+  metadataBase: new URL(config.appUrl),
   title: "S-Invoice 2.0 Demo",
   description: "POC tích hợp Hóa đơn điện tử Viettel S-Invoice 2.0",
 };

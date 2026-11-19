@@ -1,4 +1,4 @@
-const STYLES: Record<string, { cls: string; label: string }> = {
+export const STYLES: Record<string, { cls: string; label: string }> = {
   PROCESSING: { cls: "bg-blue-100 text-blue-800", label: "Đang xử lý" },
   ISSUED: { cls: "bg-emerald-100 text-emerald-800", label: "Đã phát hành" },
   AWAITING_NUMBER: { cls: "bg-violet-100 text-violet-800", label: "Chờ cấp số" },

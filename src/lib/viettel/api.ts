@@ -9,7 +9,8 @@ import type {
   ViettelSearchResponse,
 } from "./types";
 
-type Ctx = { invoiceId?: string | null; mockScenario?: string | null };
+/** trackingCode: chỉ SePay dùng; giữ ở đây để 2 provider cùng chữ ký. */
+type Ctx = { invoiceId?: string | null; mockScenario?: string | null; trackingCode?: string | null };
 
 /** Chuẩn hóa 2 định dạng lỗi của Viettel thành {code, message}. */
 function parseError(status: number, d: (ViettelErrorEnvelope & { errorCode?: string | null; description?: string | null }) | null) {
@@ -64,7 +65,8 @@ export async function searchByTransactionUuid(transactionUuid: string, ctx: Ctx)
     kind: "SEARCH",
     path: VIETTEL_PATHS.searchByTransactionUuid,
     form: { supplierTaxCode: config.supplierTaxCode, transactionUuid },
-    ...ctx,
+    invoiceId: ctx.invoiceId,
+    mockScenario: ctx.mockScenario,
   });
   if (res.status >= 500) throw new ViettelAmbiguousError(`HTTP ${res.status} khi tra cứu`, "SERVER_ERROR");
   // Có lỗi => không được kết luận "không tồn tại" (nếu kết luận sai sẽ dẫn tới gửi lại => trùng hóa đơn)

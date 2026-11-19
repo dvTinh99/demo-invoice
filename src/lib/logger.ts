@@ -13,7 +13,7 @@ export function redact(text: string | null | undefined): string | null {
   return text
     .replace(/("password"\s*:\s*")[^"]*"/gi, '$1***"')
     .replace(/("(?:access|refresh)_token"\s*:\s*")([^"]{6})[^"]*"/gi, '$1$2…"')
-    .replace(/("fileToBytes"\s*:\s*")[^"]{40}[^"]*"/g, '$1<base64 omitted>"');
+    .replace(/("(?:fileToBytes|content)"\s*:\s*")[^"]{40}[^"]*"/g, '$1<base64 omitted>"');
 }
 
 export async function writeLog(data: {

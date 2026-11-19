@@ -1,4 +1,4 @@
-import { config } from "@/lib/config";
+import { config, currentProvider } from "@/lib/config";
 import { logEvent } from "@/lib/logger";
 import { expireLocalToken, getAccessToken, getTokenInfo } from "@/lib/viettel/token";
 
@@ -10,6 +10,7 @@ import { expireLocalToken, getAccessToken, getTokenInfo } from "@/lib/viettel/to
  */
 export async function POST(req: Request) {
   const { action } = await req.json().catch(() => ({}));
+  if ((await currentProvider()) !== "viettel") return Response.json({ message: "Công cụ token chỉ dành cho Viettel" }, { status: 400 });
   try {
     if (action === "refresh") {
       await getAccessToken({ force: true, reason: "manual refresh" });

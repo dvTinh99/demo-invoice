@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { StatusBadge } from "@/components/StatusBadge";
+import { STYLES, StatusBadge } from "@/components/StatusBadge";
 import { Btn, Card, Row } from "@/components/ui";
 import { api, fmtTime, fmtVnd, type InvoiceRow, type StatusInfo } from "@/lib/client-api";
 import { usePolling } from "@/lib/use-polling";
 
 export default function Dashboard() {
   const st = usePolling<StatusInfo>("/api/status", 4000);
-  const list = usePolling<{ invoices: InvoiceRow[] }>("/api/invoices", 4000);
+  const [filter, setFilter] = useState({ q: "", status: "", provider: "" });
+  const qs = new URLSearchParams(Object.entries(filter).filter(([, v]) => v.trim())).toString();
+  const list = usePolling<{ invoices: InvoiceRow[] }>(`/api/invoices${qs ? `?${qs}` : ""}`, 4000);
+  const setF = (k: keyof typeof filter) => (e: { target: { value: string } }) => setFilter((f) => ({ ...f, [k]: e.target.value }));
   const status = st.data;
   const invoices = list.data?.invoices ?? [];
   const [busy, setBusy] = useState<string | null>(null);
@@ -42,11 +45,12 @@ export default function Dashboard() {
         <Card title="Cấu hình">
           {status && (
             <dl className="space-y-1 text-sm">
-              <Row k="Chế độ" v={status.mockMode ? "Mock (không cần tài khoản Viettel)" : "Viettel thật"} />
+              <Row k="Nhà cung cấp" v={status.providers[status.provider]} />
+              <Row k="Chế độ" v={status.provider === "sepay" ? "API SePay (sandbox/production theo Base URL)" : status.mockMode ? "Mock (không cần tài khoản Viettel)" : "Viettel thật"} />
               <Row k="Base URL" v={<span className="font-mono text-xs break-all">{status.baseUrl}</span>} />
               <Row k="MST người bán" v={status.supplierTaxCode} />
               <Row k="Loại / Mẫu / KH" v={`${status.invoiceType} · ${status.templateCode} · ${status.invoiceSeries}`} />
-              <Row k="Timeout" v={`${status.timeoutMs / 1000}s (gửi lại sau ≥ ${status.minResendGapMs / 1000}s)`} />
+              <Row k="Timeout" v={`${status.timeoutMs / 1000}s` + (status.minResendGapMs ? ` (gửi lại sau ≥ ${status.minResendGapMs / 1000}s)` : " (SePay tự chặn trùng reference_code)")} />
             </dl>
           )}
           {status && status.configErrors.length > 0 && (
@@ -69,7 +73,7 @@ export default function Dashboard() {
           ) : (
             <p className="text-sm text-slate-500">Chưa đăng nhập — token sẽ được lấy tự động ở request đầu tiên.</p>
           )}
-          <div className="mt-3 flex flex-wrap gap-2">
+          {status?.provider === "viettel" && <div className="mt-3 flex flex-wrap gap-2">
             <Btn onClick={() => tokenAction("refresh", "Refresh token")} disabled={!!busy}>Refresh</Btn>
             <Btn onClick={() => tokenAction("expire-local", "Làm token local hết hạn")} disabled={!!busy}>Hết hạn local</Btn>
             {status?.mockMode && (
@@ -77,7 +81,7 @@ export default function Dashboard() {
                 Thu hồi phía server (→ 401)
               </Btn>
             )}
-          </div>
+          </div>}
         </Card>
 
         <Card title="Thống kê & Đối soát">
@@ -129,6 +133,25 @@ export default function Dashboard() {
       <section className="rounded-lg border border-slate-200 bg-white">
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <h2 className="font-semibold">Hóa đơn</h2>
+          <div className="ml-auto mr-3 flex flex-wrap items-center gap-2 text-sm">
+            <input
+              type="search"
+              value={filter.q}
+              onChange={setF("q")}
+              placeholder="Mã đơn, người mua, số HĐ…"
+              aria-label="Tìm hóa đơn"
+              className="w-56 rounded-md border border-slate-300 px-2 py-1"
+            />
+            <select value={filter.status} onChange={setF("status")} aria-label="Lọc trạng thái" className="rounded-md border border-slate-300 bg-white px-2 py-1">
+              <option value="">Mọi trạng thái</option>
+              {Object.entries(STYLES).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
+            </select>
+            <select value={filter.provider} onChange={setF("provider")} aria-label="Lọc nhà cung cấp" className="rounded-md border border-slate-300 bg-white px-2 py-1">
+              <option value="">Mọi nhà cung cấp</option>
+              {Object.entries(status?.providers ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            {qs && <button onClick={() => setFilter({ q: "", status: "", provider: "" })} className="text-slate-500 hover:text-slate-900">Xóa lọc</button>}
+          </div>
           <Link href="/invoices/new" className="rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-700">
             + Tạo hóa đơn
           </Link>
@@ -138,6 +161,7 @@ export default function Dashboard() {
             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-2">Mã đơn</th>
+                <th className="px-4 py-2">Nhà cung cấp</th>
                 <th className="px-4 py-2">Người mua</th>
                 <th className="px-4 py-2 text-right">Tổng tiền</th>
                 <th className="px-4 py-2">Trạng thái</th>
@@ -150,8 +174,8 @@ export default function Dashboard() {
             <tbody className="divide-y divide-slate-100">
               {invoices.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-slate-500">
-                    Chưa có hóa đơn. <Link href="/invoices/new" className="text-blue-600 hover:underline">Tạo hóa đơn đầu tiên</Link>
+                  <td colSpan={9} className="px-4 py-8 text-center text-slate-500">
+                    {qs ? "Không có hóa đơn khớp bộ lọc." : <>Chưa có hóa đơn. <Link href="/invoices/new" className="text-blue-600 hover:underline">Tạo hóa đơn đầu tiên</Link></>}
                   </td>
                 </tr>
               )}
@@ -160,6 +184,7 @@ export default function Dashboard() {
                   <td className="px-4 py-2">
                     <Link href={`/invoices/${i.id}`} className="font-medium text-blue-600 hover:underline">{i.orderRef}</Link>
                   </td>
+                  <td className="px-4 py-2 text-xs">{status?.providers[i.provider as StatusInfo["provider"]] ?? i.provider}</td>
                   <td className="px-4 py-2">{i.buyerName}</td>
                   <td className="px-4 py-2 text-right font-mono">{fmtVnd(i.totalAmount)}</td>
                   <td className="px-4 py-2">

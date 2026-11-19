@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type Invoice } from "@prisma/client";
-import { config, validateConfig } from "../config";
+import { config, PROVIDERS, validateConfig, type Provider } from "../config";
 import { prisma } from "../db";
 import { logEvent } from "../logger";
-import { createInvoice, searchByTransactionUuid } from "../viettel/api";
+import * as sepay from "../sepay";
+import * as viettel from "../viettel/api";
 import { ViettelAmbiguousError, ViettelAuthError, ViettelBusinessError } from "../viettel/errors";
 import { buildCreateInvoicePayload, buyerDisplayName, type InvoiceInput } from "./payload";
+
+/** API theo nhà cung cấp của từng hóa đơn. Hai module có cùng chữ ký. */
+const providerApi = (p: string) => (p === "sepay" ? sepay : viettel);
+/** Tên nhà cung cấp cho log / thông báo. */
+const pName = (inv: Invoice) => PROVIDERS[inv.provider as Provider] ?? inv.provider;
 
 /**
  * PROCESSING      : đang gửi createInvoice (đang giữ khóa)
@@ -21,7 +27,7 @@ export type InvoiceStatus = "PROCESSING" | "ISSUED" | "AWAITING_NUMBER" | "FAILE
  * Phải lớn hơn timeout: Viettel yêu cầu chờ hết timeout (>= 90s) mới gửi lại cùng transactionUuid,
  * vì 2 request đồng thời cùng transactionUuid sẽ tạo ra 2 hóa đơn.
  */
-const staleLockMs = () => config.timeoutMs + 30_000;
+const staleLockMs = () => Math.max(config.timeoutMs, config.sepay.timeoutMs) + 30_000;
 
 export class ServiceError extends Error {
   constructor(message: string, public httpStatus: number, public code: string) {
@@ -56,9 +62,10 @@ export async function issueInvoice(args: {
   idempotencyKey: string;
   input: InvoiceInput;
   mockScenario: string | null;
+  provider: Provider;
 }): Promise<{ invoice: Invoice; replayed: boolean }> {
-  const configErrors = validateConfig();
-  if (configErrors.length) throw new ServiceError(`Cấu hình Viettel không hợp lệ: ${configErrors.join("; ")}`, 500, "CONFIG_INVALID");
+  const configErrors = validateConfig(args.provider);
+  if (configErrors.length) throw new ServiceError(`Cấu hình ${PROVIDERS[args.provider]} không hợp lệ: ${configErrors.join("; ")}`, 500, "CONFIG_INVALID");
 
   const requestHash = hashRequest(args.input, args.mockScenario);
 
@@ -67,6 +74,8 @@ export async function issueInvoice(args: {
 
   const transactionUuid = randomUUID();
   const payload = buildCreateInvoicePayload(args.input, transactionUuid);
+  // Tổng tiền luôn tính theo payload Viettel; payload gửi đi thì theo nhà cung cấp
+  const sent = args.provider === "sepay" ? sepay.buildSepayPayload(args.input, transactionUuid) : payload;
 
   let invoice: Invoice;
   try {
@@ -76,12 +85,13 @@ export async function issueInvoice(args: {
         requestHash,
         transactionUuid,
         orderRef: args.input.orderRef,
+        provider: args.provider,
         status: "PROCESSING",
         lockedAt: new Date(),
         buyerName: buyerDisplayName(args.input.buyer),
         totalAmount: payload.summarizeInfo.totalAmountWithTax,
         input: JSON.stringify(args.input),
-        payload: JSON.stringify(payload),
+        payload: JSON.stringify(sent),
         mockScenario: args.mockScenario,
       },
     });
@@ -124,9 +134,9 @@ async function submit(inv: Invoice): Promise<Invoice> {
   await prisma.invoice.update({ where: { id: inv.id }, data: { attempts, lastSentAt: new Date() } });
 
   try {
-    const result = await createInvoice(payload, { invoiceId: inv.id, mockScenario: inv.mockScenario });
+    const result = await providerApi(inv.provider).createInvoice(payload, { invoiceId: inv.id, mockScenario: inv.mockScenario });
     if (!result.invoiceNo) {
-      await logEvent(inv.id, "Viettel đã nhận hóa đơn nhưng invoiceNo rỗng (xử lý bất đồng bộ) → AWAITING_NUMBER, tra cứu lại sau");
+      await logEvent(inv.id, `${pName(inv)} đã nhận hóa đơn nhưng invoiceNo rỗng (xử lý bất đồng bộ) → AWAITING_NUMBER, tra cứu lại sau`);
       return prisma.invoice.update({
         where: { id: inv.id },
         data: {
@@ -135,7 +145,7 @@ async function submit(inv: Invoice): Promise<Invoice> {
           viettelTxnId: result.transactionID || null,
           codeOfTax: result.codeOfTax,
           errorCode: null,
-          errorMessage: "Chờ Viettel cấp số hóa đơn — chạy đối soát sau 30-90s",
+          errorMessage: `Chờ ${pName(inv)} cấp số hóa đơn — chạy đối soát để lấy số`,
           lockedAt: null,
         },
       });
@@ -158,7 +168,7 @@ async function submit(inv: Invoice): Promise<Invoice> {
   } catch (e) {
     if (e instanceof ViettelBusinessError || e instanceof ViettelAuthError) {
       const code = e instanceof ViettelBusinessError ? e.code : "AUTH_FAILED";
-      await logEvent(inv.id, `Viettel từ chối: [${code}] ${e.message} → FAILED (chắc chắn chưa lập hóa đơn)`);
+      await logEvent(inv.id, `${PROVIDERS[inv.provider as Provider] ?? inv.provider} từ chối: [${code}] ${e.message} → FAILED (chắc chắn chưa lập hóa đơn)`);
       return prisma.invoice.update({
         where: { id: inv.id },
         data: { status: "FAILED", errorCode: code, errorMessage: e.message, lockedAt: null },
@@ -188,13 +198,13 @@ export async function reconcile(id: string): Promise<Invoice> {
   }
 
   try {
-    const found = await searchByTransactionUuid(inv.transactionUuid, { invoiceId: inv.id });
+    const found = await providerApi(inv.provider).searchByTransactionUuid(inv.transactionUuid, { invoiceId: inv.id, trackingCode: inv.viettelTxnId });
     if (!found && inv.status === "AWAITING_NUMBER") {
-      await logEvent(inv.id, "Đối soát: Viettel chưa trả số hóa đơn → giữ AWAITING_NUMBER (không gửi lại)");
+      await logEvent(inv.id, `Đối soát: ${pName(inv)} chưa trả số hóa đơn → giữ AWAITING_NUMBER (không gửi lại)`);
       return inv;
     }
     if (found) {
-      await logEvent(inv.id, `Đối soát: TÌM THẤY hóa đơn ${found.invoiceNo} trên Viettel → ISSUED`);
+      await logEvent(inv.id, `Đối soát: TÌM THẤY hóa đơn ${found.invoiceNo} trên ${pName(inv)} → ISSUED`);
       return prisma.invoice.update({
         where: { id },
         data: {
@@ -210,17 +220,22 @@ export async function reconcile(id: string): Promise<Invoice> {
         },
       });
     }
-    await logEvent(inv.id, "Đối soát: KHÔNG tìm thấy trên Viettel → có thể gửi lại an toàn với cùng transactionUuid");
+    await logEvent(inv.id, `Đối soát: KHÔNG tìm thấy trên ${pName(inv)} → có thể gửi lại an toàn với cùng transactionUuid`);
     return prisma.invoice.update({
       where: { id },
       data: {
         status: inv.status === "FAILED" ? "FAILED" : "UNKNOWN",
         errorCode: inv.status === "FAILED" ? inv.errorCode : "NOT_FOUND_ON_VIETTEL",
-        errorMessage: inv.status === "FAILED" ? inv.errorMessage : "Đối soát không thấy hóa đơn trên Viettel — an toàn để gửi lại",
+        errorMessage: inv.status === "FAILED" ? inv.errorMessage : `Đối soát không thấy hóa đơn trên ${pName(inv)} — an toàn để gửi lại`,
         lockedAt: null,
       },
     });
   } catch (e) {
+    // Nhà cung cấp xác nhận xử lý thất bại (vd SePay status Failed) => chắc chắn chưa lập
+    if (e instanceof ViettelBusinessError) {
+      await logEvent(inv.id, `Đối soát: nhà cung cấp báo thất bại [${e.code}] ${e.message} → FAILED`);
+      return prisma.invoice.update({ where: { id }, data: { status: "FAILED", errorCode: e.code, errorMessage: e.message, lockedAt: null } });
+    }
     await logEvent(inv.id, `Đối soát thất bại: ${(e as Error).message} → giữ nguyên trạng thái`);
     return prisma.invoice.update({
       where: { id },
@@ -240,7 +255,8 @@ export async function retry(id: string): Promise<Invoice> {
 
   if (inv.status === "UNKNOWN" || isStale(inv)) {
     // Mục 5.3: chỉ gửi lại cùng transactionUuid sau khi request trước đã timeout (>= 90s)
-    const waited = inv.lastSentAt ? Date.now() - inv.lastSentAt.getTime() : Infinity;
+    // SePay chặn trùng reference_code phía server nên không cần chờ
+    const waited = inv.provider === "sepay" ? Infinity : inv.lastSentAt ? Date.now() - inv.lastSentAt.getTime() : Infinity;
     if (waited < config.minResendGapMs) {
       const s = Math.ceil((config.minResendGapMs - waited) / 1000);
       throw new ServiceError(`Phải chờ thêm ${s}s kể từ lần gửi trước mới được gửi lại cùng transactionUuid (quy tắc >= 90s của Viettel)`, 409, "RESEND_TOO_EARLY");
@@ -248,7 +264,7 @@ export async function retry(id: string): Promise<Invoice> {
     inv = await reconcile(id);
     if (inv.status === "ISSUED") return inv;
     if (inv.errorCode !== "NOT_FOUND_ON_VIETTEL") {
-      throw new ServiceError("Chưa xác định được trạng thái trên Viettel, không gửi lại", 409, "STILL_UNKNOWN");
+      throw new ServiceError(`Chưa xác định được trạng thái trên ${pName(inv)}, không gửi lại`, 409, "STILL_UNKNOWN");
     }
   }
 

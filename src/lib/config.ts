@@ -1,3 +1,15 @@
+import { cookies } from "next/headers";
+
+export const PROVIDERS = { viettel: "Viettel S-Invoice", sepay: "SePay eInvoice" } as const;
+export type Provider = keyof typeof PROVIDERS;
+export const PROVIDER_COOKIE = "invoice_provider";
+
+/** Nhà cung cấp người dùng đang chọn trên navbar (cookie). Mặc định viettel. */
+export async function currentProvider(): Promise<Provider> {
+  const v = (await cookies()).get(PROVIDER_COOKIE)?.value;
+  return v === "sepay" ? "sepay" : "viettel";
+}
+
 function env(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
   if (v === undefined) throw new Error(`Missing env ${name}`);
@@ -5,8 +17,23 @@ function env(name: string, fallback?: string): string {
 }
 
 export const config = {
+  /** Mock chỉ áp dụng cho Viettel; SePay luôn gọi API thật (sandbox hoặc production). */
   get mockMode() {
     return env("VIETTEL_MOCK_MODE", "true").toLowerCase() === "true";
+  },
+  get sepay() {
+    return {
+      baseUrl: env("SEPAY_BASE_URL", "https://einvoice-api-sandbox.sepay.vn").replace(/\/$/, ""),
+      clientId: env("SEPAY_CLIENT_ID", ""),
+      clientSecret: env("SEPAY_CLIENT_SECRET", ""),
+      /** Bỏ trống => tự lấy provider account active đầu tiên từ /v1/provider-accounts */
+      providerAccountId: env("SEPAY_PROVIDER_ACCOUNT_ID", ""),
+      /** 1 = Hóa đơn GTGT, 2 = Hóa đơn bán hàng */
+      templateCode: env("SEPAY_TEMPLATE_CODE", "1"),
+      /** Lấy từ chi tiết provider account; phần C{YY} phải là năm hiện tại */
+      invoiceSeries: env("SEPAY_INVOICE_SERIES", ""),
+      timeoutMs: Number(env("SEPAY_TIMEOUT_MS", "30000")),
+    };
   },
   /**
    * URL của chính app. Trên Vercel nếu không đặt APP_URL: bản production dùng domain production
@@ -82,8 +109,15 @@ export const config = {
 
 /** Đường dẫn API Viettel S-Invoice 2.0 (giống hệt cho Mock server). */
 /** Kiểm tra cấu hình theo ràng buộc trong tài liệu (mục 6 + 7.2). Trả về danh sách lỗi. */
-export function validateConfig(): string[] {
+export function validateConfig(provider: Provider): string[] {
   const e: string[] = [];
+  if (provider === "sepay") {
+    const s = config.sepay;
+    if (!s.clientId || !s.clientSecret) e.push("Thiếu SEPAY_CLIENT_ID / SEPAY_CLIENT_SECRET");
+    if (!["1", "2"].includes(s.templateCode)) e.push("SEPAY_TEMPLATE_CODE phải là 1 (GTGT) hoặc 2 (bán hàng)");
+    if (!s.invoiceSeries) e.push("Thiếu SEPAY_INVOICE_SERIES (vd C26TSE, lấy từ chi tiết provider account)");
+    return e;
+  }
   if (!/^[0-9-]{10,20}$/.test(config.supplierTaxCode)) e.push("VIETTEL_SUPPLIER_TAX_CODE phải dạng [0-9-], tối đa 20 ký tự");
   if (!config.templateCode || config.templateCode.length > 20) e.push("VIETTEL_TEMPLATE_CODE bắt buộc, tối đa 20 ký tự (vd 1/001)");
   if (!/^[a-zA-Z0-9/]{1,25}$/.test(config.invoiceSeries)) e.push("VIETTEL_INVOICE_SERIES chỉ gồm [a-zA-Z0-9/], tối đa 25 ký tự (vd C24TAA)");

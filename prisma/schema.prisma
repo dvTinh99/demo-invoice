@@ -22,6 +22,8 @@ model Invoice {
   /// transactionUuid gửi sang Viettel — giữ cố định cho mọi lần retry / đối soát.
   transactionUuid String   @unique
   orderRef        String
+  /// Nhà cung cấp đã dùng để xuất: viettel | sepay — retry / đối soát / tải file luôn đi theo giá trị này
+  provider        String   @default("viettel")
   /// PROCESSING | ISSUED | AWAITING_NUMBER | FAILED | UNKNOWN
   status          String
   buyerName       String

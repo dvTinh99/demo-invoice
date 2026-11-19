@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { errorResponse } from "@/lib/http-utils";
-import { getInvoiceFile } from "@/lib/viettel/api";
+import { getInvoiceFile as sepayFile } from "@/lib/sepay";
+import { getInvoiceFile as viettelFile } from "@/lib/viettel/api";
 
 /** Gọi Viettel có thể mất tới 90s/request (login + retry + đối soát) — cần vượt mặc định của Vercel. */
 export const maxDuration = 300;
@@ -22,8 +23,9 @@ export async function GET(req: Request, ctx: RouteContext<"/api/invoices/[id]/pd
   if (age < MIN_AGE_MS) await new Promise((r) => setTimeout(r, MIN_AGE_MS - age));
 
   try {
+    const getInvoiceFile = inv.provider === "sepay" ? sepayFile : viettelFile;
     const file = await getInvoiceFile(
-      { invoiceNo: inv.invoiceNo, transactionUuid: inv.transactionUuid, fileType },
+      { invoiceNo: inv.invoiceNo, transactionUuid: inv.transactionUuid, fileType, trackingCode: inv.viettelTxnId },
       { invoiceId: inv.id },
     );
     return new Response(new Uint8Array(file.bytes), {
