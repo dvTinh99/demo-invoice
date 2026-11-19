@@ -22,8 +22,8 @@ export const fmtTime = (s: string | null | undefined) =>
   s ? new Date(s).toLocaleString("vi-VN", { hour12: false }) : "—";
 
 export interface StatusInfo {
-  provider: "viettel" | "sepay";
-  providers: Record<"viettel" | "sepay", string>;
+  provider: "viettel" | "sepay" | "matbao";
+  providers: Record<"viettel" | "sepay" | "matbao", string>;
   mockMode: boolean;
   baseUrl: string;
   supplierTaxCode: string;

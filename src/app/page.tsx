@@ -46,7 +46,7 @@ export default function Dashboard() {
           {status && (
             <dl className="space-y-1 text-sm">
               <Row k="Nhà cung cấp" v={status.providers[status.provider]} />
-              <Row k="Chế độ" v={status.provider === "sepay" ? "API SePay (sandbox/production theo Base URL)" : status.mockMode ? "Mock (không cần tài khoản Viettel)" : "Viettel thật"} />
+              <Row k="Chế độ" v={status.provider === "sepay" ? "API SePay (sandbox/production theo Base URL)" : status.provider === "matbao" ? "API Mắt Bão (demo/production theo Base URL)" : status.mockMode ? "Mock (không cần tài khoản Viettel)" : "Viettel thật"} />
               <Row k="Base URL" v={<span className="font-mono text-xs break-all">{status.baseUrl}</span>} />
               <Row k="MST người bán" v={status.supplierTaxCode} />
               <Row k="Loại / Mẫu / KH" v={`${status.invoiceType} · ${status.templateCode} · ${status.invoiceSeries}`} />

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { errorResponse } from "@/lib/http-utils";
+import { getInvoiceFile as matbaoFile } from "@/lib/matbao";
 import { getInvoiceFile as sepayFile } from "@/lib/sepay";
 import { getInvoiceFile as viettelFile } from "@/lib/viettel/api";
 
@@ -23,7 +24,7 @@ export async function GET(req: Request, ctx: RouteContext<"/api/invoices/[id]/pd
   if (age < MIN_AGE_MS) await new Promise((r) => setTimeout(r, MIN_AGE_MS - age));
 
   try {
-    const getInvoiceFile = inv.provider === "sepay" ? sepayFile : viettelFile;
+    const getInvoiceFile = inv.provider === "sepay" ? sepayFile : inv.provider === "matbao" ? matbaoFile : viettelFile;
     const file = await getInvoiceFile(
       { invoiceNo: inv.invoiceNo, transactionUuid: inv.transactionUuid, fileType, trackingCode: inv.viettelTxnId },
       { invoiceId: inv.id },

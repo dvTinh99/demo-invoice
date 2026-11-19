@@ -1,13 +1,13 @@
 import { cookies } from "next/headers";
 
-export const PROVIDERS = { viettel: "Viettel S-Invoice", sepay: "SePay eInvoice" } as const;
+export const PROVIDERS = { viettel: "Viettel S-Invoice", sepay: "SePay eInvoice", matbao: "Matbao-invoice (Mắt Bão)" } as const;
 export type Provider = keyof typeof PROVIDERS;
 export const PROVIDER_COOKIE = "invoice_provider";
 
 /** Nhà cung cấp người dùng đang chọn trên navbar (cookie). Mặc định viettel. */
 export async function currentProvider(): Promise<Provider> {
   const v = (await cookies()).get(PROVIDER_COOKIE)?.value;
-  return v === "sepay" ? "sepay" : "viettel";
+  return v && v in PROVIDERS ? (v as Provider) : "viettel";
 }
 
 function env(name: string, fallback?: string): string {
@@ -20,6 +20,20 @@ export const config = {
   /** Mock chỉ áp dụng cho Viettel; SePay luôn gọi API thật (sandbox hoặc production). */
   get mockMode() {
     return env("VIETTEL_MOCK_MODE", "true").toLowerCase() === "true";
+  },
+  get matbao() {
+    return {
+      /** Demo: https://demo-api-hddt.matbao.in:11443 · Production: https://api-hddt.matbao.in:11443 */
+      baseUrl: env("MATBAO_BASE_URL", "https://demo-api-hddt.matbao.in:11443").replace(/\/$/, ""),
+      /** MST + tài khoản đăng nhập do Mắt Bão cấp (api/auth/login: MST, TDNhap, MKhau) */
+      taxCode: env("MATBAO_TAX_CODE", ""),
+      username: env("MATBAO_USERNAME", ""),
+      password: env("MATBAO_PASSWORD", ""),
+      /** Mẫu số (KHMSHDon, vd 1 = GTGT) + ký hiệu 6 ký tự (KHHDon, vd C26TAA) — lấy từ /api/invoice/templates */
+      pattern: env("MATBAO_PATTERN", "1"),
+      serial: env("MATBAO_SERIAL", ""),
+      timeoutMs: Number(env("MATBAO_TIMEOUT_MS", "60000")),
+    };
   },
   get sepay() {
     return {
@@ -111,6 +125,12 @@ export const config = {
 /** Kiểm tra cấu hình theo ràng buộc trong tài liệu (mục 6 + 7.2). Trả về danh sách lỗi. */
 export function validateConfig(provider: Provider): string[] {
   const e: string[] = [];
+  if (provider === "matbao") {
+    const m = config.matbao;
+    if (!m.taxCode || !m.username || !m.password) e.push("Thiếu MATBAO_TAX_CODE / MATBAO_USERNAME / MATBAO_PASSWORD");
+    if (!/^[A-Z0-9]{6}$/.test(m.serial)) e.push("MATBAO_SERIAL phải là ký hiệu 6 ký tự (vd C26TAA)");
+    return e;
+  }
   if (provider === "sepay") {
     const s = config.sepay;
     if (!s.clientId || !s.clientSecret) e.push("Thiếu SEPAY_CLIENT_ID / SEPAY_CLIENT_SECRET");

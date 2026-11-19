@@ -3,13 +3,14 @@ import { Prisma, type Invoice } from "@prisma/client";
 import { config, PROVIDERS, validateConfig, type Provider } from "../config";
 import { prisma } from "../db";
 import { logEvent } from "../logger";
+import * as matbao from "../matbao";
 import * as sepay from "../sepay";
 import * as viettel from "../viettel/api";
 import { ViettelAmbiguousError, ViettelAuthError, ViettelBusinessError } from "../viettel/errors";
 import { buildCreateInvoicePayload, buyerDisplayName, type InvoiceInput } from "./payload";
 
 /** API theo nhà cung cấp của từng hóa đơn. Hai module có cùng chữ ký. */
-const providerApi = (p: string) => (p === "sepay" ? sepay : viettel);
+const providerApi = (p: string) => (p === "sepay" ? sepay : p === "matbao" ? matbao : viettel);
 /** Tên nhà cung cấp cho log / thông báo. */
 const pName = (inv: Invoice) => PROVIDERS[inv.provider as Provider] ?? inv.provider;
 
@@ -27,7 +28,7 @@ export type InvoiceStatus = "PROCESSING" | "ISSUED" | "AWAITING_NUMBER" | "FAILE
  * Phải lớn hơn timeout: Viettel yêu cầu chờ hết timeout (>= 90s) mới gửi lại cùng transactionUuid,
  * vì 2 request đồng thời cùng transactionUuid sẽ tạo ra 2 hóa đơn.
  */
-const staleLockMs = () => Math.max(config.timeoutMs, config.sepay.timeoutMs) + 30_000;
+const staleLockMs = () => Math.max(config.timeoutMs, config.sepay.timeoutMs, config.matbao.timeoutMs) + 30_000;
 
 export class ServiceError extends Error {
   constructor(message: string, public httpStatus: number, public code: string) {
@@ -75,7 +76,10 @@ export async function issueInvoice(args: {
   const transactionUuid = randomUUID();
   const payload = buildCreateInvoicePayload(args.input, transactionUuid);
   // Tổng tiền luôn tính theo payload Viettel; payload gửi đi thì theo nhà cung cấp
-  const sent = args.provider === "sepay" ? sepay.buildSepayPayload(args.input, transactionUuid) : payload;
+  const sent =
+    args.provider === "sepay" ? sepay.buildSepayPayload(args.input, transactionUuid)
+    : args.provider === "matbao" ? matbao.buildMatbaoPayload(args.input, transactionUuid)
+    : payload;
 
   let invoice: Invoice;
   try {
@@ -256,7 +260,8 @@ export async function retry(id: string): Promise<Invoice> {
   if (inv.status === "UNKNOWN" || isStale(inv)) {
     // Mục 5.3: chỉ gửi lại cùng transactionUuid sau khi request trước đã timeout (>= 90s)
     // SePay chặn trùng reference_code phía server nên không cần chờ
-    const waited = inv.provider === "sepay" ? Infinity : inv.lastSentAt ? Date.now() - inv.lastSentAt.getTime() : Infinity;
+    // SePay (reference_code) và Mắt Bão (MTChieu) chặn trùng phía server nên không cần chờ
+    const waited = inv.provider !== "viettel" ? Infinity : inv.lastSentAt ? Date.now() - inv.lastSentAt.getTime() : Infinity;
     if (waited < config.minResendGapMs) {
       const s = Math.ceil((config.minResendGapMs - waited) / 1000);
       throw new ServiceError(`Phải chờ thêm ${s}s kể từ lần gửi trước mới được gửi lại cùng transactionUuid (quy tắc >= 90s của Viettel)`, 409, "RESEND_TOO_EARLY");
