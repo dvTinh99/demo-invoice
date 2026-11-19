@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Hóa đơn phía hệ thống tích hợp (merchant side).
+model Invoice {
+  id              String   @id @default(cuid())
+  /// Khóa idempotency do client gửi (header Idempotency-Key). Unique => chống xuất trùng.
+  idempotencyKey  String   @unique
+  /// SHA-256 của payload đầu vào — cùng key nhưng khác payload => 422.
+  requestHash     String
+  /// transactionUuid gửi sang Viettel — giữ cố định cho mọi lần retry / đối soát.
+  transactionUuid String   @unique
+  orderRef        String
+  /// PROCESSING | ISSUED | AWAITING_NUMBER | FAILED | UNKNOWN
+  status          String
+  buyerName       String
+  totalAmount     Float
+  /// JSON: input đơn giản (buyer + items) do người dùng nhập
+  input           String
+  /// JSON: payload createInvoice thực sự gửi sang Viettel
+  payload         String
+  mockScenario    String?
+  invoiceNo       String?
+  reservationCode String?
+  viettelTxnId    String?
+  /// Mã CQT cấp (hóa đơn có mã / máy tính tiền)
+  codeOfTax       String?
+  errorCode       String?
+  errorMessage    String?
+  attempts        Int      @default(0)
+  lockedAt        DateTime?
+  /// Lần gửi createInvoice gần nhất — dùng để áp quy tắc chờ >= 90s trước khi gửi lại cùng transactionUuid
+  lastSentAt      DateTime?
+  issuedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  logs            ApiLog[]
+}
+
+/// Log kỹ thuật cho mọi request ra ngoài (và sự kiện nội bộ quan trọng).
+model ApiLog {
+  id           String   @id @default(cuid())
+  invoiceId    String?
+  invoice      Invoice? @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// AUTH | CREATE | SEARCH | FILE | EVENT
+  kind         String
+  method       String?
+  url          String?
+  requestBody  String?
+  status       Int?
+  responseBody String?
+  durationMs   Int?
+  error        String?
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([createdAt])
+}
+
+/// Cache token (1 dòng duy nhất, id = "viettel") — sống sót qua restart server.
+model TokenCache {
+  id          String   @id
+  accessToken String
+  expiresAt   DateTime
+  updatedAt   DateTime @updatedAt
+}
+
+/// ===== Bảng dành riêng cho Mock Viettel server =====
+model MockToken {
+  token     String   @id
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model MockInvoice {
+  transactionUuid String   @id
+  supplierTaxCode String
+  templateCode    String
+  invoiceSeries   String
+  invoiceNo       String   @unique
+  reservationCode String
+  transactionID   String
+  payload         String
+  /// Mô phỏng xử lý bất đồng bộ: trước thời điểm này tra cứu chưa thấy số hóa đơn
+  numberReadyAt   DateTime @default(now())
+  createdAt       DateTime @default(now())
+}
