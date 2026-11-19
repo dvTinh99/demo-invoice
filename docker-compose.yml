@@ -1,0 +1,62 @@
+name: demo-invoice
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-invoice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-invoice}
+      POSTGRES_DB: ${POSTGRES_DB:-invoice}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      # Chế độ desktop: không cần đăng nhập pgAdmin, không hỏi master password (chỉ dùng cho dev)
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+      # Đăng ký sẵn server "demo-invoice" trỏ tới service db
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./docker/pgadmin/pgpass:/tmp/pgpass:ro
+    # libpq chỉ đọc pgpass có quyền 0600 và thuộc user của container (uid 5050)
+    entrypoint: >
+      sh -c "cp /tmp/pgpass /var/lib/pgadmin/pgpass && chmod 600 /var/lib/pgadmin/pgpass && exec /entrypoint.sh"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Tùy chọn: chạy cả app trong Docker → docker compose --profile app up -d --build
+  app:
+    profiles: ["app"]
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-invoice}:${POSTGRES_PASSWORD:-invoice}@db:5432/${POSTGRES_DB:-invoice}?schema=public
+      APP_URL: http://localhost:3000
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  pgadmin:

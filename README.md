@@ -12,19 +12,68 @@
 - **Mock Mode**: Mock server nội bộ có cùng endpoint, định dạng response, ràng buộc dữ liệu và mã lỗi như tài liệu.
 - **Log kỹ thuật**: ghi mọi request/response ra Viettel (đã che password và token), hiển thị dạng timeline theo từng hóa đơn.
 
-Tech stack: Next.js 16 (App Router) · TypeScript · Prisma 6 + SQLite · Tailwind CSS 4 · native `fetch`.
+Tech stack: Next.js 16 (App Router) · TypeScript · Prisma 6 + PostgreSQL 17 · Tailwind CSS 4 · native `fetch` · Docker Compose (Postgres + pgAdmin).
 
 ## Chạy nhanh
 
+Yêu cầu: Node.js 22 và Docker (có Compose v2).
+
 ```bash
 npm install
-npm run setup      # tạo .env từ .env.example (nếu chưa có) + tạo SQLite DB
-npm run dev        # http://localhost:3000
+npm run setup      # tạo .env (nếu chưa có), bật Postgres bằng Docker, chạy migration
+npm run dev        # http://localhost:3000 — mỗi lần chạy đều tự bật DB + migrate (xem bên dưới)
 ```
 
 Mặc định `VIETTEL_MOCK_MODE=true`, không cần tài khoản Viettel.
 
-> Sau khi đổi `prisma/schema.prisma`, chạy `npm run db:push` rồi **khởi động lại** `npm run dev`. Dev server cache Prisma Client trong bộ nhớ.
+## Docker Compose
+
+| Service   | Image                  | Cổng host | Ghi chú |
+| --------- | ---------------------- | --------- | ------- |
+| `db`      | `postgres:17-alpine`   | `5432`    | user / pass / db: `invoice` / `invoice` / `invoice`, dữ liệu trong volume `pgdata` |
+| `pgadmin` | `dpage/pgadmin4`       | `5050`    | http://localhost:5050, không cần đăng nhập, đã đăng ký sẵn server **demo-invoice** (không phải nhập mật khẩu) |
+| `app`     | build từ `Dockerfile`  | `3000`    | Tùy chọn (profile `app`), chạy app production trong Docker |
+
+```bash
+npm run db:up                                  # chỉ Postgres + pgAdmin (dùng khi dev bằng npm run dev)
+docker compose --profile app up -d --build     # chạy thêm app trong Docker (cần tắt npm run dev hoặc đặt APP_PORT=3001)
+npm run db:down                                # dừng tất cả (giữ dữ liệu)
+docker compose down -v                         # dừng và XÓA dữ liệu Postgres/pgAdmin
+```
+
+Cổng và thông tin đăng nhập có thể đổi bằng biến môi trường khi chạy compose: `POSTGRES_PORT`, `PGADMIN_PORT`, `APP_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. Nếu đổi user/mật khẩu DB, cần cập nhật cả `DATABASE_URL` trong `.env`, `docker/pgadmin/servers.json` và `docker/pgadmin/pgpass`.
+
+- Service `app` đọc biến môi trường từ `.env`, nhưng ghi đè `DATABASE_URL` để trỏ tới host `db`. Khi khởi động, nó chạy `prisma migrate deploy`.
+- pgAdmin chạy ở chế độ desktop (`SERVER_MODE=False`) cho tiện khi dev. **Không** mở cổng 5050 ra ngoài internet.
+- Bảng trong pgAdmin: `Servers → demo-invoice → Databases → invoice → Schemas → public → Tables` (`Invoice`, `ApiLog`, `TokenCache`, `MockInvoice`, `MockToken`). Tên bảng có chữ hoa, nên khi viết SQL cần đặt trong ngoặc kép, vd `select * from "Invoice";`.
+
+## Database migration
+
+Schema được quản lý bằng Prisma Migrate. Migration nằm trong `prisma/migrations/`.
+
+Mỗi lần chạy `npm run dev`, script `predev` tự chạy trước:
+
+```
+docker compose up -d --wait db   # bật Postgres nếu chưa chạy, chờ healthy
+prisma migrate deploy            # áp dụng các migration chưa chạy (không tạo migration mới, không xóa dữ liệu)
+prisma generate                  # cập nhật Prisma Client
+```
+
+Khi đổi `prisma/schema.prisma`:
+
+```bash
+npm run db:migrate -- --name ten_thay_doi   # tạo file migration mới + áp dụng vào DB dev
+```
+
+Sau đó commit thư mục `prisma/migrations/`. Người khác chỉ cần `npm run dev` là DB của họ được cập nhật.
+
+| Script | Lệnh | Dùng khi |
+| --- | --- | --- |
+| `npm run db:migrate` | `prisma migrate dev` | Tạo migration mới từ thay đổi schema (dev) |
+| `npm run db:deploy` | `prisma migrate deploy` | Chỉ áp dụng migration có sẵn (CI / production) |
+| `npm run db:status` | `prisma migrate status` | Xem migration nào đã/chưa chạy |
+
+> Nếu đổi schema trong khi `npm run dev` đang chạy, cần **khởi động lại** dev server. Dev server cache Prisma Client trong bộ nhớ.
 
 ## Kết nối hệ thống test của Viettel
 
@@ -192,4 +241,4 @@ curl -X POST http://localhost:3000/api/invoices \
 - **Bảo mật API nội bộ**: chưa có xác thực/phân quyền. `/api/admin/reset` và `/api/token` chỉ dùng cho demo.
 - **Nhiều instance**: khóa `PROCESSING` nằm trong DB nên vẫn đúng. Tuy nhiên token single-flight chỉ áp dụng trong 1 process. Nên dùng Redis lock, hoặc chấp nhận mỗi instance login riêng.
 - **Job đối soát**: đang gọi thủ công. Production nên chạy cron 1–5 phút/lần (tài liệu đề xuất quét lại hóa đơn chưa có số sau 30–90s).
-- **Database**: SQLite chỉ phù hợp cho demo. Production nên chuyển sang Postgres/MySQL (đổi `provider` trong `prisma/schema.prisma`).
+- **Docker**: image `app` copy toàn bộ `node_modules` cho đơn giản. Production nên build Next.js `output: "standalone"` để image gọn hơn.
