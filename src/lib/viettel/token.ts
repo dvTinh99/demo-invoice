@@ -28,7 +28,7 @@ async function login(invoiceId?: string | null, reason = "no token"): Promise<Ca
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...config.mockHeaders },
       body,
       signal: AbortSignal.timeout(config.timeoutMs),
       cache: "no-store",

@@ -50,6 +50,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-invoice}:${POSTGRES_PASSWORD:-invoice}@db:5432/${POSTGRES_DB:-invoice}?schema=public
+      DIRECT_URL: postgresql://${POSTGRES_USER:-invoice}:${POSTGRES_PASSWORD:-invoice}@db:5432/${POSTGRES_DB:-invoice}?schema=public
       APP_URL: http://localhost:3000
     ports:
       - "${APP_PORT:-3000}:3000"

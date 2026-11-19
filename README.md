@@ -96,6 +96,23 @@ Lưu ý:
 - Trong ví dụ của tài liệu, MST người bán trùng với username (vd `0100109106-712`).
 - Dashboard kiểm tra cấu hình theo ràng buộc của tài liệu và hiển thị lỗi nếu có. Request xuất hóa đơn bị chặn (`500 CONFIG_INVALID`) khi cấu hình sai.
 
+## Deploy lên Vercel
+
+Repo đã có sẵn cấu hình cho Vercel: `vercel.json` (region `sin1` Singapore và cron), script `vercel-build` tự chạy `prisma migrate deploy`, Prisma binary `rhel-openssl-3.0.x`, cùng `maxDuration = 300` cho các route gọi Viettel.
+
+1. **Database**: Vercel → Storage → tạo **Neon Postgres** (chọn region Singapore), rồi gắn vào project. Đặt biến môi trường:
+   - `DATABASE_URL` = URL **pooled**, thêm `?pgbouncer=true` (hoặc `&pgbouncer=true`)
+   - `DIRECT_URL` = URL **unpooled**, dùng cho `prisma migrate` (Neon integration có sẵn biến `DATABASE_URL_UNPOOLED`, copy giá trị sang)
+2. **Biến môi trường khác**: các biến `VIETTEL_*` giống `.env.example`. **Không** đặt `APP_URL`, app tự lấy URL deployment của Vercel.
+3. **Bảo vệ**: đặt `BASIC_AUTH_USER` và `BASIC_AUTH_PASSWORD` (bắt buộc nếu link public, vì trên Dashboard có nút *Reset dữ liệu demo*). Đặt thêm `CRON_SECRET` (chuỗi ngẫu nhiên) để Vercel Cron gọi được `/api/cron/reconcile`.
+4. **Mock Mode trên bản preview**: app tự gọi mock server qua URL của chính deployment, mà URL này bị Deployment Protection chặn. Vào Settings → Deployment Protection, bật **Protection Bypass for Automation**. Vercel sẽ cấp `VERCEL_AUTOMATION_BYPASS_SECRET` và app tự gửi kèm header bypass. Bản production (domain `*.vercel.app` chính) không cần bước này.
+5. Import repo vào Vercel (Framework: Next.js), không cần đổi Build Command, rồi Deploy.
+
+Lưu ý:
+- Gói **Hobby** chỉ cho cron chạy 1 lần/ngày (`0 1 * * *` = 8h sáng giờ VN). Gói Pro có thể đổi thành `*/5 * * * *` trong `vercel.json`. Ngoài cron, nút *Chạy job đối soát* trên Dashboard vẫn dùng được.
+- `maxDuration = 300s` là mức tối đa của gói Hobby (cần Fluid Compute, mặc định đã bật cho project mới).
+- pgAdmin và Docker chỉ dùng khi dev local. Trên Vercel, xem dữ liệu bằng Neon Console.
+
 ## Đối chiếu yêu cầu tài liệu → triển khai
 
 | Tài liệu | Yêu cầu | Triển khai |
@@ -202,6 +219,7 @@ Các công cụ demo khác trên Dashboard:
 | POST   | `/api/invoices/:id/retry`      | Gửi lại (với `UNKNOWN`: kiểm tra ≥ 90s và đối soát trước) |
 | GET    | `/api/invoices/:id/pdf[?type=ZIP]` | Bản thể hiện PDF hoặc gói ZIP (`getInvoiceRepresentationFile`) |
 | POST   | `/api/reconcile`               | Job đối soát hàng loạt (`UNKNOWN`, `AWAITING_NUMBER`, `PROCESSING` bị treo). Nên gắn cron. |
+| GET    | `/api/cron/reconcile`          | Như trên, cho Vercel Cron (header `Authorization: Bearer $CRON_SECRET`) |
 | GET    | `/api/status`                  | Cấu hình, lỗi cấu hình, trạng thái token, thống kê        |
 | GET    | `/api/logs?kind=&limit=`       | Log kỹ thuật                                              |
 

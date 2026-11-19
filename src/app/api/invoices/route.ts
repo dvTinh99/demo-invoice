@@ -4,6 +4,9 @@ import { errorResponse } from "@/lib/http-utils";
 import { validateInput } from "@/lib/invoice/payload";
 import { issueInvoice } from "@/lib/invoice/service";
 
+/** Gọi Viettel có thể mất tới 90s/request (login + retry + đối soát) — cần vượt mặc định của Vercel. */
+export const maxDuration = 300;
+
 export async function GET() {
   const invoices = await prisma.invoice.findMany({
     orderBy: { createdAt: "desc" },

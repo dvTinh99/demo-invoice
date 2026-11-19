@@ -2,6 +2,9 @@ import { prisma } from "@/lib/db";
 import { errorResponse } from "@/lib/http-utils";
 import { getInvoiceFile } from "@/lib/viettel/api";
 
+/** Gọi Viettel có thể mất tới 90s/request (login + retry + đối soát) — cần vượt mặc định của Vercel. */
+export const maxDuration = 300;
+
 /**
  * Mục 7.3: hóa đơn được đẩy vào CSDL ~1s sau khi phát hành (bất đồng bộ),
  * nên lấy file sau 2-5s. Nếu hóa đơn vừa phát hành thì chờ cho đủ.

@@ -24,6 +24,7 @@ async function send<T>(req: ViettelRequest, token: string, attempt: number): Pro
   const headers: Record<string, string> = {
     // S-Invoice 2.0 xác thực bằng cookie access_token
     Cookie: `access_token=${token}`,
+    ...config.mockHeaders,
   };
   let body: string;
   if (req.form) {

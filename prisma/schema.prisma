@@ -1,11 +1,15 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  // rhel-openssl-3.0.x: runtime Node.js của Vercel
+  binaryTargets = ["native", "debian-openssl-3.0.x", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  /// Chuỗi kết nối app dùng lúc chạy (trên Vercel: URL pooled của Neon/Supabase)
+  url       = env("DATABASE_URL")
+  /// Kết nối trực tiếp cho prisma migrate (pooler không hỗ trợ migrate). Local: giống DATABASE_URL
+  directUrl = env("DIRECT_URL")
 }
 
 /// Hóa đơn phía hệ thống tích hợp (merchant side).

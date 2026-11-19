@@ -8,8 +8,26 @@ export const config = {
   get mockMode() {
     return env("VIETTEL_MOCK_MODE", "true").toLowerCase() === "true";
   },
+  /**
+   * URL của chính app. Trên Vercel nếu không đặt APP_URL: bản production dùng domain production
+   * (không bị Deployment Protection chặn), bản preview dùng URL của chính deployment đó.
+   */
   get appUrl() {
-    return env("APP_URL", "http://localhost:3000").replace(/\/$/, "");
+    const vercelHost =
+      process.env.VERCEL_ENV === "production"
+        ? process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL
+        : process.env.VERCEL_URL;
+    const fallback = vercelHost ? `https://${vercelHost}` : "http://localhost:3000";
+    return (process.env.APP_URL || fallback).replace(/\/$/, "");
+  },
+  /**
+   * Header bổ sung khi app tự gọi Mock server của chính nó. Trên Vercel, bản preview có
+   * Deployment Protection: bật "Protection Bypass for Automation" để Vercel cấp
+   * VERCEL_AUTOMATION_BYPASS_SECRET, request nội bộ mới đi qua được.
+   */
+  get mockHeaders(): Record<string, string> {
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    return this.mockMode && bypass ? { "x-vercel-protection-bypass": bypass } : {};
   },
   /** Base URL thực sự được gọi: Mock server nội bộ hoặc Viettel thật. */
   get baseUrl() {
